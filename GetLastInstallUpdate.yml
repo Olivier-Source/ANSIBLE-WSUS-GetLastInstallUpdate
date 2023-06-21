@@ -1,0 +1,46 @@
+---
+- name: Récupérer la date d'installation des mises à jour Windows et générer un fichier CSV
+  hosts: windows_hosts
+  gather_facts: false
+  vars:
+    csv_file_path: "/path/to/updates.csv"
+  tasks:
+    - name: Collecter les faits sur les mises à jour
+      win_updates_facts:
+        category_names:
+          - SecurityUpdates
+          - UpdateRollups
+          - CriticalUpdates
+          - Updates
+      register: updates
+
+    - name: Créer une liste des mises à jour avec le nom de la machine et la date
+      set_fact:
+        updates_list: "{{ updates_list|default([]) + [{'name': inventory_hostname, 'date': item.installed_on}] }}"
+      loop: "{{ updates.updates }}"
+
+    - name: Trier les mises à jour par date d'installation (ordre décroissant)
+      set_fact:
+        sorted_updates_list: "{{ updates_list|sort(attribute='date', reverse=true) }}"
+
+    - name: Extraire les statistiques pertinentes
+      set_fact:
+        last_update_date: "{{ sorted_updates_list | map(attribute='date') | first }}"
+        machines_without_updates: "{{ groups['windows_hosts'] | difference(sorted_updates_list | map(attribute='name')) }}"
+        machines_without_updates_count: "{{ machines_without_updates | length }}"
+        oldest_machine_without_update: "{{ machines_without_updates | random }}"
+        oldest_machine_without_update_date: "{{ sorted_updates_list | selectattr('name', 'equalto', oldest_machine_without_update) | map(attribute='date') | first }}"
+      
+    - name: Créer le fichier CSV
+      local_action:
+        module: copy
+        content: |
+          Machine,Date d'installation de la mise à jour
+          {% for update in sorted_updates_list %}
+          {{ update.name }},{{ update.date }}
+          {% endfor %}
+          Statistiques pertinentes
+          Dernière date de mise à jour,{{ last_update_date }}
+          Nombre de machines sans mise à jour,{{ machines_without_updates_count }}
+          Machine sans mise à jour depuis longtemps,{{ oldest_machine_without_update }},{{ oldest_machine_without_update_date }}
+        dest: "{{ csv_file_path }}"
